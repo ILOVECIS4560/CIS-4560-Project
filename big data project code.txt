@@ -106,7 +106,67 @@ HAVING year(c_date_received) BETWEEN 2021 AND 2023
 ORDER BY c_complaint_id;
 
 -------------------------------------------------------------------------------------------
-
+DROP TABLE IF EXISTS top_issues;
+CREATE TABLE top_issues
+ROW FORMAT DELIMITED FIELDS TERMINATED BY ','
+STORED AS TEXTFILE LOCATION '/user/bsimanj/project_tables/BS/top_issues'
+AS
+with top_10_issues AS
+(
+SELECT issue, COUNT(*) AS complaints_count
+FROM issue_data
+GROUP BY issue
+ORDER BY complaints_count DESC
+LIMIT 10)
+select * from top_10_issues
+ORDER BY complaints_count DESC;
+---------------------------------------------------------------------------------------
+SELECT count(*) AS total_complaints, state FROM state_table
+GROUP BY state ORDER BY total_complaints desc limit 10;
+DROP TABLE IF EXISTS state_table;
+CREATE TABLE state_table
+ROW FORMAT DELIMITED FIELDS TERMINATED BY ','
+STORED AS TEXTFILE LOCATION '/user/bsimanj/project_tables/BS/state_table'
+AS
+SELECT cd.c_complaint_id AS complaint_id, cd.c_date_received AS date_received,
+cd.company AS
+company,
+pd.product AS Product, id.issue AS issue, master.c_state AS state, master.c_zip AS zip
+FROM bsimanj.complaints master
+JOIN bsimanj.company_data cd ON cd.c_complaint_id = master.c_complaint_id
+JOIN bsimanj.product_data pd ON pd.c_complaint_id = master.c_complaint_id
+JOIN bsimanj.issue_data id ON id.c_complaint_id= master.c_complaint_id
+GROUP BY cd.c_complaint_id, cd.c_date_received, cd.company, pd.product, id.issue,
+master.c_state,
+master.c_zip
+HAVING year(cd.c_date_received) BETWEEN 2021 AND 2023 AND master.c_state != ''
+ORDER BY state;
+--------------------------------------------------------------------------------------
+CREATE TABLE top_products
+ROW FORMAT DELIMITED FIELDS TERMINATED BY ','
+STORED AS TEXTFILE LOCATION '/user/bsimanj/project_tables/BS/top_products'
+AS
+with top_3_products AS
+(SELECT product, COUNT(*) AS complaints_count
+FROM bsimanj.product_data
+GROUP BY product
+ORDER BY complaints_count DESC
+LIMIT 3)
+SELECT * FROM top_3_products
+ORDER BY complaints_count DESC
+-------------------------------------------------------------------------------------
+DROP TABLE IF EXISTS complaints_submitted_via;
+CREATE TABLE complaints_submitted_via
+ROW FORMAT DELIMITED FIELDS TERMINATED BY ','
+STORED AS TEXTFILE
+LOCATION '/user/bsimanj/project_tables/BS/complaints_submitted_via'
+AS
+SELECT c_state, c_submitted_via, COUNT(c_complaint_id) AS complaints
+FROM bsimanj.complaints
+GROUP BY c_state, c_submitted_via
+HAVING c_state!='' AND c_submitted_via!='';
+select * from complaints_submitted_via;
+-------------------------------------------------------------
 DROP TABLE IF EXISTS raw_narrative;
 CREATE TABLE raw_narrative
 (
