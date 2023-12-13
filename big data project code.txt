@@ -266,22 +266,7 @@ cat 00000{0..9}_0 00001{0..9}_0 00006{0..5}_0 > senti_out.csv
 -------------------------------------------------------------------------
 $ scp ahuynh57@129.146.90.117:/home/ahuynh57/senti_out.csv senti_out.csv
 ------------------------------------------------------------------------
-DROP TABLE IF EXISTS top_products;
 
-CREATE TABLE top_products
-ROW FORMAT DELIMITED
-FIELDS TERMINATED BY ","
-STORED AS TEXTFILE LOCATION '/user/ahuynh57/project_tables/top_products'
-AS
-with top_products AS
-(SELECT product, COUNT(*) AS complaints_count
-FROM product_data
-GROUP BY product
-ORDER BY complaints_count)
-SELECT * FROM top_products 
-ORDER BY complaints_count DESC;
-
-------------------------------------------------------------------------------
 CREATE TABLE top_companies_complaints 
 ROW FORMAT DELIMITED
 FIELDS TERMINATED BY ","
