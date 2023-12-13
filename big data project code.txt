@@ -1,0 +1,295 @@
+hdfs version
+------------------------------------------------------------------------
+yarn node -list -all
+-----------------------------------------------------------------------
+hdfs dfsadmin -report
+------------------------------------------------------------------------
+lscpu
+----------------------------------------------------------------------
+Wget https://files.consumerfinance.gov/ccdb/complaints.json.zip
+--------------------------------------------------------------------
+wget -O dictionary.tsv https://github.com/dalgual/aidatasci/raw/master/data/bigdata/dictionary.tsv
+--------------------------------------------------------------------------------------------------
+hdfs dfs -mkdir big_data_project
+hdfs dfs -put complaints.json big_data_project
+hdfs dfs -mkdir project_tables
+hdfs dfs -mkdir /user/bsimanj/project_tables/BS
+hdfs dfs -mkdir project_tables/BS/dictionary.tsv
+hdfs dfs -put dictionary.tsv project_tables/BS/dictionary
+hdfs dfs -ls project_tables/BS/dictionary
+
+-------------------------------------------------------------------------
+
+CREATE EXTERNAL TABLE IF NOT EXISTS raw_complaints(json_response STRING)
+STORED AS TEXTFILE
+LOCATION '/user/bsimanj/big_data_project/
+
+----------------------------------------------------------------------------
+
+DROP TABLE IF EXISTS complaints;
+CREATE TABLE complaints(
+c_date_received string, c_product string, c_sub_product string,
+c_issue string, c_sub_issue string, c_complaint_narrative string, c_company_public_response
+string,
+c_company string, c_state string, c_zip int,
+c_tags string, c_consumer_consent string, c_submitted_via string,
+c_date_sent_to_company string, c_company_response_to_consumer string,
+c_timely_response string, c_consumer_disputed string, c_complaint_id bigint
+);
+
+--------------------------------------------------------------------------------
+
+FROM raw_complaints
+INSERT INTO TABLE complaints
+SELECT CAST(to_date(from_unixtime(unix_timestamp(get_json_object(json_response,
+'$.date_received'), 'yyyy-MM-dd'))) AS date),
+get_json_object(json_response, '$.product'),
+get_json_object(json_response, '$.sub_product'),
+get_json_object(json_response, '$.issue'),
+get_json_object(json_response, '$.sub_issue'),
+get_json_object(json_response, '$.complaint_what_happened'),
+get_json_object(json_response, '$.company_public_response'),
+get_json_object(json_response, '$.company'),
+get_json_object(json_response, '$.state'),
+get_json_object(json_response, '$.zip_code'),
+get_json_object(json_response, '$.tags'),
+get_json_object(json_response, '$.consumer_consent_provided'),
+get_json_object(json_response, '$.submitted_via'),
+get_json_object(json_response, '$.date_sent_to_company'),
+get_json_object(json_response, '$.company_response'),
+get_json_object(json_response, '$.timely'),
+get_json_object(json_response, '$.consumer_disputed'),
+get_json_object(json_response, '$.complaint_id');
+
+------------------------------------------------------------------------------
+
+DROP TABLE IF EXISTS company_data;
+CREATE TABLE company_data
+ROW FORMAT DELIMITED FIELDS TERMINATED BY ','
+STORED AS TEXTFILE LOCATION '/user/bsimanj/project_tables/BS/company_data'
+AS
+SELECT c_complaint_id, c_date_received,
+regexp_replace(c_company,'[^a-zA-Z0-9,:\'\"`;\$\(\)\\s]', '')
+company
+FROM complaints
+GROUP BY c_complaint_id, c_date_received, c_company
+HAVING year(c_date_received) BETWEEN 2021 AND 2023
+ORDER BY c_complaint_id;
+
+---------------------------------------------------------------------------------
+DROP TABLE IF EXISTS product_data;
+CREATE TABLE product_data
+ROW FORMAT DELIMITED FIELDS TERMINATED BY ','
+STORED AS TEXTFILE LOCATION '/user/bsimanj/project_tables/BS/product_data'
+AS
+SELECT c_complaint_id, c_date_received,
+regexp_replace(c_product,'[^a-zA-Z0-9,:\'\"`;\$\(\)\\s]', '')
+product, regexp_replace(c_sub_product,'[^a-zA-Z0-9,:\'\"`;\$\(\)\\s]', '') sub_product
+FROM complaints
+GROUP BY c_complaint_id, c_date_received, c_product, c_sub_product
+HAVING year(c_date_received) BETWEEN 2021 AND 2023
+ORDER BY c_complaint_id;
+
+---------------------------------------------------------------------------------------
+
+DROP TABLE IF EXISTS issue_data;
+CREATE TABLE issue_data
+ROW FORMAT DELIMITED FIELDS TERMINATED BY ','
+STORED AS TEXTFILE LOCATION '/user/bsimanj/project_tables/BS/issue_data'
+AS
+SELECT c_complaint_id, c_date_received, regexp_replace(c_issue,'[^a-zA-Z0-9,:\'\"`;\$\(\)\\s]',
+'') issue,
+regexp_replace(c_sub_issue,'[^a-zA-Z0-9,:\'\"`;\$\(\)\\s]', '') sub_issue
+FROM complaints
+GROUP BY c_complaint_id, c_date_received, c_issue, c_sub_issue
+HAVING year(c_date_received) BETWEEN 2021 AND 2023
+ORDER BY c_complaint_id;
+
+-------------------------------------------------------------------------------------------
+
+DROP TABLE IF EXISTS raw_narrative;
+CREATE TABLE raw_narrative
+(
+product string,
+issue string,
+company string,
+narrative string)
+ROW FORMAT DELIMITED
+FIELDS TERMINATED BY "\t"
+STORED AS TEXTFILE LOCATION '/user/bsimanj/project_tables/BS/raw_narrative';
+INSERT OVERWRITE table raw_narrative
+SELECT CONCAT('{ "product": "', tp.product, '"}'), CONCAT('{"issue": "', ti.issue, '"}'),
+CONCAT('{"company": "', c_company, '"}'), CONCAT('{"narrative": "',
+regexp_replace(c_complaint_narrative,'[xX]', ''), '"}')
+FROM bsimanj.top_products tp, top_issues ti, complaints
+WHERE tp.product = 'Credit reporting, credit repair services, or other personal consumer
+reports' AND
+ti.issue = 'Incorrect information on your report' AND c_company = 'WELLS FARGO COMPANY';
+
+--------------------------------------------------------------------------------------
+
+SELECT EXPLODE(NGRAMS(SENTENCES(LOWER(narrative)), 5, 10))
+AS ngram
+FROM raw_narrative;
+
+-----------------------------------------------------------------
+
+INSERT OVERWRITE table raw_narrative
+SELECT CONCAT('{ "product": "', tp.product, '"}'), CONCAT('{"issue": "', ti.issue, '"}'),
+CONCAT('{"company": "', c_company, '"}'), CONCAT('{"narrative": "',
+regexp_replace(c_complaint_narrative,'[xX]', ''), '"}')
+FROM bsimanj.top_products tp, top_issues ti, complaints
+WHERE tp.product = 'Credit reporting, credit repair services, or other personal consumer
+reports' AND
+ti.issue = 'Incorrect information on your report' AND c_company = 'EQUIFAX, INC.';
+
+--------------------------------------------------------------------
+
+SELECT EXPLODE(NGRAMS(SENTENCES(LOWER(narrative)), 4, 10))
+AS ngram
+FROM raw_narrative;
+
+----------------------------------------
+
+CREATE EXTERNAL TABLE if not exists sent_dictionary (
+type string,
+length int,
+word string,
+pos string,
+stemmed string,
+polarity string )
+ROW FORMAT DELIMITED
+FIELDS TERMINATED BY '\t'
+STORED AS TEXTFILE
+LOCATION '/user/ahuynh57/dictionary/sent_dictionary';
+
+-------------------------------------------------
+CREATE EXTERNAL TABLE if not exists dictionary ( 
+ type string, 
+ length int, 
+ word string, 
+ pos string, 
+ stemmed string, 
+ polarity string ) 
+ROW FORMAT DELIMITED 
+FIELDS TERMINATED BY '\t' 
+STORED AS TEXTFILE 
+LOCATION '/user/ahuynh57/tmp/data/tables/dictionary';
+
+-----------------------------------------------------------
+ select * from state_table order by state_table.zip desc limit 5;
+
+-----------------------------------------------------------------
+CREATE VIEW IF NOT EXISTS complaints_cleaned AS
+SELECT
+complaint_id,
+date_received,
+regexp_replace(complaint_narrative, '[^a-zA-Z0-9\\s]', '') narrative,
+state
+FROM complaints
+WHERE YEAR(date_received) BETWEEN 2021 AND 2023;
+
+-------------------------------------------------------------------
+
+CREATE VIEW IF NOT EXISTS c1 as
+SELECT complaint_id, date_received, words
+FROM complaints
+LATERAL VIEW EXPLODE(sentences(lower(complaint_narrative))) dummy as words
+WHERE YEAR(date_received) BETWEEN 2021 AND 2023;
+
+-------------------------------------------------------------------
+
+CREATE VIEW IF NOT EXISTS c2 as
+SELECT complaint_id, date_received, word
+FROM c1
+LATERAL VIEW EXPLODE ( words ) dummy as word
+WHERE YEAR(date_received) BETWEEN 2021 AND 2023;
+
+--------------------------------------------------------------------
+
+create view IF NOT EXISTS c3 as select
+complaint_id, date_received, 
+c2.word,
+case d.polarity
+when 'negative' then -1
+when 'positive' then 1
+else 0 end as polarity
+from c2 left outer join dictionary d on c2.word = d.word
+WHERE YEAR(date_received) BETWEEN 2021 AND 2023
+ORDER BY polarity ASC;
+
+---------------------------------------------------------------------
+create table IF NOT EXISTS complaint_sentiment
+stored as orc as 
+SELECT complaint_id, date_received,
+case
+when sum( polarity ) > 0 then 'positive'
+when sum( polarity ) < 0 then 'negative'
+else 'neutral' end as sentiment
+from c3 
+group by complaint_id, date_received, YEAR(date_received)
+HAVING YEAR(date_received) BETWEEN 2021 AND 2023;
+
+------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS complaintsbi
+ROW FORMAT DELIMITED
+FIELDS TERMINATED BY ","
+STORED AS TEXTFILE
+LOCATION "/user/ahuynh57/project_tables/complaintsbi"
+AS SELECT
+c.*,
+case cs.sentiment
+when 'positive' then 2
+when 'neutral' then 1
+when 'negative' then 0
+end as sentiment
+FROM complaints_cleaned c LEFT OUTER JOIN complaint_sentiment cs
+on c.complaint_id = cs.complaint_id;
+
+--------------------------------------------------------------------------
+
+CREATE TABLE IF NOT EXISTS complaints_sentiment
+ROW FORMAT DELIMITED
+FIELDS TERMINATED BY ","
+STORED AS TEXTFILE
+LOCATION "/user/ahuynh57/project_tables/complaints_sentiment"
+AS
+select complaint_id, date_received, narrative, state, sentiment from complaintsbi
+where complaint_id IS NOT NULL
+AND ( sentiment =0 or sentiment =1 or sentiment =2) 
+AND (YEAR(date_received) BETWEEN 2021 AND 2023);
+
+--------------------------------------------------------------------------
+ hdfs dfs -get /user/ahuynh57/project_tables/complaints_sentiment/000*_0
+--------------------------------------------------------------------------
+cat 00000{0..9}_0 00001{0..9}_0 00006{0..5}_0 > senti_out.csv
+-------------------------------------------------------------------------
+$ scp ahuynh57@129.146.90.117:/home/ahuynh57/senti_out.csv senti_out.csv
+------------------------------------------------------------------------
+DROP TABLE IF EXISTS top_products;
+
+CREATE TABLE top_products
+ROW FORMAT DELIMITED
+FIELDS TERMINATED BY ","
+STORED AS TEXTFILE LOCATION '/user/ahuynh57/project_tables/top_products'
+AS
+with top_products AS
+(SELECT product, COUNT(*) AS complaints_count
+FROM product_data
+GROUP BY product
+ORDER BY complaints_count)
+SELECT * FROM top_products 
+ORDER BY complaints_count DESC;
+
+------------------------------------------------------------------------------
+CREATE TABLE top_companies_complaints 
+ROW FORMAT DELIMITED
+FIELDS TERMINATED BY ","
+STORED AS TEXTFILE LOCATION 
+'/user/ahuynh57/project_tables/top_companies_complaints' 
+AS 
+with top_companies_complaints AS 
+( 
+SELECT company, count(*) as complaints FROM company_data master GROUP BY 
+company)
+select * FROM top_companies_complaints ORDER BY complaints DESC;
